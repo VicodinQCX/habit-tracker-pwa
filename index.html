@@ -32,7 +32,11 @@
     </style>
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#2563eb"/>
-</head>
+
+    <script type="module" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js"></script>
+    <script type="module" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js"></script>
+    <script type="module" src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js"></script>
+    </head>
 <body class="p-4">
 
     <div class="max-w-2xl mx-auto bg-white p-6 rounded-lg shadow-md">
@@ -69,9 +73,68 @@
 
     </div>
 
-    <script>
-        // 用于存储挑战数据的数组
+    <script type="module">
+        // TODO: 替换为您的 Firebase 项目配置信息
+        const firebaseConfig = {
+          apiKey: "AIzaSyCnHRCHX9UkUfV-IT2KGFM1uTYnP4V5Chk",
+          authDomain: "my-habit-tracker-5bd43.firebaseapp.com",
+          projectId: "my-habit-tracker-5bd43",
+          storageBucket: "my-habit-tracker-5bd43.firebasestorage.app",
+          messagingSenderId: "9130341594",
+          appId: "1:9130341594:web:25b3d22c7efc8c196661e3"
+            measurementId: "G-TGL8RGBTTL"
+        };
+
+        // 引入 Firebase SDK 的具体模块
+        import { initializeApp } from "firebase/app";
+        import { getFirestore, collection, addDoc, getDocs, query, where, doc, updateDoc } from "firebase/firestore";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
+
+        // 初始化 Firebase 应用
+        const app = initializeApp(firebaseConfig);
+
+        // 获取 Firestore 数据库和 Authentication 实例
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        // 用于存储挑战数据的数组 (现在将从 Firestore 加载)
         let challenges = [];
+        let currentUser = null; // 用于存储当前登录的用户信息
+
+        // 监听认证状态变化
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                // 用户已登录
+                currentUser = user;
+                console.log("用户已登录:", currentUser.uid);
+                // 用户登录后加载数据
+                loadChallenges();
+            } else {
+                // 用户已退出
+                currentUser = null;
+                console.log("用户已退出");
+                // 如果用户退出，清空本地数据并渲染
+                challenges = [];
+                renderChallenges();
+                // TODO: 可以提示用户登录或处理未登录状态
+            }
+        });
+
+        // 匿名登录 (您可以根据需要选择其他认证方式)
+        // 在页面加载时尝试匿名登录
+        signInAnonymously(auth)
+          .then(() => {
+            // 匿名登录成功，onAuthStateChanged 会处理后续逻辑
+            console.log("匿名登录尝试成功");
+          })
+          .catch((error) => {
+            const errorCode = error.code;
+            const errorMessage = error.message;
+            console.error("匿名登录失败:", errorCode, errorMessage);
+            alert(`匿名登录失败: ${errorMessage}`);
+            // TODO: 处理登录失败的情况，例如提示用户检查网络或稍后重试
+          });
+
 
         // 获取今天的日期，格式为YYYY-MM-DD
         function getTodayDate() {
@@ -119,7 +182,7 @@
             challenges.forEach(challenge => {
                 const challengeElement = document.createElement('div');
                 challengeElement.classList.add('bg-gray-100', 'p-4', 'rounded-md', 'shadow-sm');
-                // 使用 data-id 存储挑战的唯一 ID，方便查找
+                // 使用 data-id 存储挑战的 Firestore 文档 ID
                 challengeElement.dataset.id = challenge.id;
 
                 const progress = calculateProgress(challenge);
@@ -149,26 +212,43 @@
             });
         }
 
-        // 保存挑战数据到 Local Storage
-        function saveChallenges() {
-            localStorage.setItem('challenges', JSON.stringify(challenges));
-        }
-
-        // 从 Local Storage 加载挑战数据
-        function loadChallenges() {
-            const storedChallenges = localStorage.getItem('challenges');
-            if (storedChallenges) {
-                challenges = JSON.parse(storedChallenges);
+        // 从 Firestore 加载挑战数据
+        async function loadChallenges() {
+            if (!currentUser) {
+                console.log("用户未登录，无法加载数据");
+                challenges = []; // 清空本地数据
+                renderChallenges();
+                return;
             }
-            // 渲染加载后的挑战
-            renderChallenges();
-        }
 
-        // 页面加载时加载挑战数据
-        window.onload = loadChallenges;
+            try {
+                // 查询当前用户的挑战数据
+                const q = query(collection(db, "challenges"), where("userId", "==", currentUser.uid));
+                const querySnapshot = await getDocs(q);
+
+                challenges = []; // 清空本地数组
+                querySnapshot.forEach((doc) => {
+                    // 将从 Firestore 读取的数据添加到本地 challenges 数组
+                    // doc.id 是 Firestore 文档的 ID
+                    challenges.push({ id: doc.id, ...doc.data() });
+                });
+
+                console.log("从 Firestore 加载数据成功:", challenges);
+                renderChallenges(); // 渲染页面
+
+            } catch (error) {
+                console.error("从 Firestore 加载数据失败:", error);
+                alert("加载数据失败，请检查网络或权限。");
+            }
+        }
 
         // 添加新挑战按钮的事件监听器
-        document.getElementById('add-challenge-btn').addEventListener('click', function() {
+        document.getElementById('add-challenge-btn').addEventListener('click', async function() {
+            if (!currentUser) {
+                alert("请先登录以添加挑战。");
+                return;
+            }
+
             const habitNameInput = document.getElementById('habit-name');
             const startDateInput = document.getElementById('start-date');
             const durationInput = document.getElementById('duration');
@@ -178,27 +258,31 @@
             const duration = durationInput.value;
 
             if (habitName && startDate && duration && parseInt(duration, 10) > 0) {
-                // 创建新的挑战对象
-                const newChallenge = {
-                    // 使用时间戳作为唯一 ID
-                    id: Date.now(),
-                    name: habitName,
-                    startDate: startDate,
-                    duration: parseInt(duration, 10),
-                    checkIns: [] // 初始化打卡记录为空数组
-                };
+                try {
+                    // 将新挑战添加到 Firestore
+                    const docRef = await addDoc(collection(db, "challenges"), {
+                        userId: currentUser.uid, // 关联用户 ID
+                        name: habitName,
+                        startDate: startDate,
+                        duration: parseInt(duration, 10),
+                        checkIns: [] // 初始化打卡记录为空数组
+                    });
 
-                // 将新挑战添加到数组
-                challenges.push(newChallenge);
+                    console.log("新挑战已添加到 Firestore，文档 ID:", docRef.id);
 
-                // 保存并渲染挑战
-                saveChallenges();
-                renderChallenges();
+                    // 添加成功后重新加载并渲染挑战
+                    // 注意：这里重新加载会从 Firestore 获取最新数据，确保同步
+                    loadChallenges();
 
-                // 清空表单
-                habitNameInput.value = '';
-                startDateInput.value = '';
-                durationInput.value = '';
+                    // 清空表单
+                    habitNameInput.value = '';
+                    startDateInput.value = '';
+                    durationInput.value = '';
+
+                } catch (error) {
+                    console.error("添加挑战到 Firestore 失败:", error);
+                    alert("添加挑战失败，请检查网络或权限。");
+                }
 
             } else {
                 alert('请填写有效的挑战信息！名称、开始日期和时长（大于0）都不能为空。');
@@ -206,27 +290,49 @@
         });
 
         // 使用事件委托处理打卡按钮点击事件
-        document.getElementById('challenges-list').addEventListener('click', function(event) {
+        document.getElementById('challenges-list').addEventListener('click', async function(event) {
+             if (!currentUser) {
+                alert("请先登录以打卡。");
+                return;
+            }
+
             // 检查点击的元素是否是打卡按钮
             if (event.target.classList.contains('check-in-btn')) {
                 const button = event.target;
                 const challengeElement = button.closest('.bg-gray-100'); // 找到最近的挑战元素
-                const challengeId = parseInt(challengeElement.dataset.id, 10); // 获取挑战 ID
+                const firestoreDocId = challengeElement.dataset.id; // 获取挑战的 Firestore 文档 ID
 
-                // 查找对应的挑战对象
-                const challenge = challenges.find(c => c.id === challengeId);
+                // 查找对应的本地挑战对象 (用于更新 checkIns 数组)
+                const challenge = challenges.find(c => c.id === firestoreDocId);
 
                 if (challenge) {
                     const todayDate = getTodayDate();
 
                     // 检查今天是否已经打卡
                     if (!challenge.checkIns.includes(todayDate)) {
-                        // 添加今天的打卡记录
+                        // 添加今天的打卡记录到本地数组
                         challenge.checkIns.push(todayDate);
 
-                        // 保存并更新显示
-                        saveChallenges();
-                        renderChallenges(); // 重新渲染整个列表以更新状态和进度
+                        try {
+                            // 更新 Firestore 中的挑战文档
+                            const challengeDocRef = doc(db, "challenges", firestoreDocId);
+                            await updateDoc(challengeDocRef, {
+                                checkIns: challenge.checkIns
+                            });
+
+                            console.log("挑战打卡成功，Firestore 文档 ID:", firestoreDocId);
+
+                            // 更新本地数组并重新渲染页面以更新状态和进度
+                            // 注意：这里直接更新本地数组并渲染，更快响应。
+                            // 如果需要更严格的同步，可以在更新 Firestore 成功后重新 loadChallenges
+                            renderChallenges();
+
+                        } catch (error) {
+                            console.error("更新 Firestore 打卡失败:", error);
+                            alert("打卡失败，请检查网络或权限。");
+                            // TODO: 如果更新失败，可能需要回滚本地的 checkIns 更改
+                        }
+
                     } else {
                         // 理论上按钮会被禁用，但这提供一个额外的提示
                         alert('今天已经打过卡了！');
@@ -236,15 +342,19 @@
         });
 
         // 注册 Service Worker (用于 PWA 的离线功能)
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/sw.js')
-                .then(registration => {
-                    console.log('Service Worker registered with scope:', registration.scope);
-                })
-                .catch(error => {
-                    console.error('Service Worker registration failed:', error);
-                });
-        }
+        // 在 DOMContentLoaded 事件发生后再注册，确保页面元素加载完成
+        window.addEventListener('load', () => {
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(registration => {
+                        console.log('Service Worker registered with scope:', registration.scope);
+                    })
+                    .catch(error => {
+                        console.error('Service Worker registration failed:', error);
+                    });
+            }
+        });
+
 
     </script>
 
